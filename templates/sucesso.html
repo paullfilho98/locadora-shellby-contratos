@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Locadora Shellby - Pré-solicitação enviada</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+  <div class="page">
+
+    <header class="header">
+      <div class="header-left">
+        <img src="{{ url_for('static', filename='img/logo-shellby.png') }}" 
+             alt="Locadora Shellby" class="logo">
+        <div>
+          <h1 class="app-title">Locadora Shellby – Pré-solicitação de contrato</h1>
+          <p class="app-subtitle">
+            Resultado do processamento da sua solicitação.
+          </p>
+        </div>
+      </div>
+      <div class="header-right">
+        <span class="badge">Locadora Shellby</span>
+        <span class="badge badge-secondary">Company Limited</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="card form-card">
+
+        {% if status_envio == "ok" %}
+          <h2 class="section-title">Pré-solicitação enviada</h2>
+          <p style="margin-bottom: 16px;">
+            Pré solicitação de contrato enviada com sucesso. 🎉
+          </p>
+          <p style="margin-bottom: 10px;">
+            O contrato em PDF foi encaminhado para o e-mail da locadora
+            <strong>{{ EMAIL_DESTINO if false else "" }}</strong> para conferência e assinatura manual.
+          </p>
+        {% else %}
+          <h2 class="section-title">Atenção</h2>
+          <p style="margin-bottom: 10px; color: #fca5a5;">
+            Ocorreu um erro ao tentar enviar o e-mail com o contrato.
+          </p>
+          <p style="font-size: 0.85rem; color: #fca5a5;">
+            Detalhes técnicos (para o administrador do sistema): {{ erro_envio }}
+          </p>
+        {% endif %}
+
+        <hr style="border: none; border-top: 1px solid #1f2937; margin: 18px 0;">
+
+        <h3 style="font-size: 0.9rem; margin-bottom: 8px;">
+          Resumo da solicitação
+        </h3>
+        <ul style="font-size: 0.85rem; color: #9CA3AF; margin-left: 16px; margin-bottom: 18px;">
+          <li><strong>Locatário:</strong> {{ locatario_nome }}</li>
+          <li><strong>Carro:</strong> {{ carro_nome }}</li>
+          <li><strong>Período:</strong> {{ data_inicio }} a {{ data_fim }}</li>
+          <li><strong>Dias de locação:</strong> {{ dias_locacao }}</li>
+        </ul>
+
+        <div class="actions">
+          <a href="{{ url_for('formulario') }}" class="btn-primary" style="text-decoration:none; display:inline-block; text-align:center;">
+            Fazer nova pré-solicitação
+          </a>
+        </div>
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <p>Sistema interno de locação • Contrato enviado por e-mail para análise e assinatura.</p>
+    </footer>
+
+  </div>
+</body>
+</html>
