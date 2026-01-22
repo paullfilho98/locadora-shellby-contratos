@@ -1,10 +1,11 @@
 from flask import Flask, render_template, request
 from datetime import datetime, timedelta
 import os
+import subprocess  # <--- NOVO
 
 from werkzeug.utils import secure_filename
 from docxtpl import DocxTemplate
-from docx2pdf import convert
+# from docx2pdf import convert  # <--- REMOVIDO
 from PyPDF2 import PdfMerger
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -65,7 +66,6 @@ CARROS = {
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-# Essas variáveis virão do ambiente (Render, ou .env se você quiser testar local)
 SMTP_USER = os.environ.get("SMTP_USER")          # ex: seuemail@gmail.com
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")  # senha de app do Gmail
 EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", SMTP_USER)
@@ -119,6 +119,41 @@ def juntar_pdfs(lista_caminhos, caminho_saida):
     with open(caminho_saida, "wb") as f:
         merger.write(f)
     merger.close()
+
+
+def docx_para_pdf(caminho_docx, caminho_pdf_destino):
+    """
+    Converte DOCX em PDF usando LibreOffice pela linha de comando.
+    Render usa Linux, então é esse caminho aqui.
+    """
+    pasta_saida = os.path.dirname(caminho_pdf_destino) or BASE_DIR
+
+    # Executa o LibreOffice em modo headless
+    resultado = subprocess.run(
+        [
+            "libreoffice",
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            pasta_saida,
+            caminho_docx,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    if resultado.returncode != 0:
+        raise RuntimeError(f"Erro ao converter DOCX para PDF: {resultado.stderr}")
+
+    # LibreOffice salva com o mesmo nome base do DOCX
+    nome_base = os.path.splitext(os.path.basename(caminho_docx))[0] + ".pdf"
+    pdf_gerado = os.path.join(pasta_saida, nome_base)
+
+    # Se o nome for diferente do esperado, renomeia
+    if pdf_gerado != caminho_pdf_destino:
+        os.replace(pdf_gerado, caminho_pdf_destino)
 
 
 def enviar_email_com_anexo(assunto, corpo, destinatario, caminho_anexo):
@@ -236,8 +271,8 @@ def formulario():
 
     doc.save(caminho_docx_preenchido)
 
-    # ---------- 4. CONVERTE DOCX PARA PDF ----------
-    convert(caminho_docx_preenchido, caminho_pdf_contrato)
+    # ---------- 4. CONVERTE DOCX PARA PDF (AGORA COM LIBREOFFICE) ----------
+    docx_para_pdf(caminho_docx_preenchido, caminho_pdf_contrato)
 
     pdfs_para_juntar = [caminho_pdf_contrato]
 
