@@ -1,17 +1,13 @@
 from flask import Flask, render_template, request
 from datetime import datetime, timedelta
 import os
-import subprocess  # para chamar o LibreOffice
-
 from werkzeug.utils import secure_filename
+
 from docxtpl import DocxTemplate
-from PyPDF2 import PdfMerger
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
 
 import smtplib
 from email.message import EmailMessage
+import mimetypes
 
 # ================= CONFIGURAÇÕES BÁSICAS =================
 
@@ -88,99 +84,37 @@ def salvar_upload(file_obj):
     return caminho
 
 
-def imagem_para_pdf(caminho_imagem, caminho_pdf_saida):
-    """Converte uma imagem (JPG, PNG, etc.) em um PDF de uma página."""
-    c = canvas.Canvas(caminho_pdf_saida, pagesize=A4)
-    largura_pagina, altura_pagina = A4
-
-    img = ImageReader(caminho_imagem)
-    largura_img, altura_img = img.getSize()
-
-    escala = min(largura_pagina / largura_img, altura_pagina / altura_img)
-
-    nova_largura = largura_img * escala
-    nova_altura = altura_img * escala
-
-    x = (largura_pagina - nova_largura) / 2
-    y = (altura_pagina - nova_altura) / 2
-
-    c.drawImage(img, x, y, nova_largura, nova_altura)
-    c.showPage()
-    c.save()
-
-
-def docx_para_pdf(caminho_docx, caminho_pdf_destino):
-    """
-    Converte DOCX em PDF usando LibreOffice pela linha de comando (Linux).
-    """
-    pasta_saida = os.path.dirname(caminho_pdf_destino) or BASE_DIR
-
-    resultado = subprocess.run(
-        [
-            "libreoffice",
-            "--headless",
-            "--convert-to", "pdf",
-            "--outdir", pasta_saida,
-            caminho_docx,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    if resultado.returncode != 0:
-        raise RuntimeError(f"Erro ao converter DOCX para PDF: {resultado.stderr}")
-
-    # LibreOffice gera um PDF com o mesmo nome base do DOCX
-    nome_base = os.path.splitext(os.path.basename(caminho_docx))[0] + ".pdf"
-    pdf_gerado = os.path.join(pasta_saida, nome_base)
-
-    # Se o destino for diferente do gerado, renomeia
-    if pdf_gerado != caminho_pdf_destino:
-        os.replace(pdf_gerado, caminho_pdf_destino)
-
-
-def juntar_pdfs(lista_caminhos, caminho_saida):
-    """
-    Juntas os PDFs, ignorando arquivos inexistentes ou vazios (0 bytes)
-    para evitar PyPDF2.errors.EmptyFileError.
-    """
-    merger = PdfMerger()
-
-    for caminho in lista_caminhos:
-        if not caminho:
-            continue
-        if not os.path.exists(caminho):
-            continue
-        if os.path.getsize(caminho) == 0:
-            # se por algum motivo o PDF estiver vazio, pula
-            continue
-
-        merger.append(caminho)
-
-    with open(caminho_saida, "wb") as f:
-        merger.write(f)
-    merger.close()
-
-
-def enviar_email_com_anexo(assunto, corpo, destinatario, caminho_anexo):
-    """Envia e-mail com o PDF de contrato anexado."""
+def enviar_email_com_anexos(assunto, corpo, destinatario, caminhos):
+    """Envia e-mail com 1 ou mais anexos."""
     msg = EmailMessage()
     msg["Subject"] = assunto
     msg["From"] = SMTP_USER
     msg["To"] = destinatario
     msg.set_content(corpo)
 
-    with open(caminho_anexo, "rb") as f:
-        dados = f.read()
-    nome_arquivo = os.path.basename(caminho_anexo)
+    for caminho in caminhos:
+        if not caminho:
+            continue
+        if not os.path.exists(caminho):
+            continue
 
-    msg.add_attachment(
-        dados,
-        maintype="application",
-        subtype="pdf",
-        filename=nome_arquivo,
-    )
+        mime_type, _ = mimetypes.guess_type(caminho)
+        if mime_type:
+            maintype, subtype = mime_type.split("/", 1)
+        else:
+            maintype, subtype = "application", "octet-stream"
+
+        with open(caminho, "rb") as f:
+            dados = f.read()
+
+        nome_arquivo = os.path.basename(caminho)
+
+        msg.add_attachment(
+            dados,
+            maintype=maintype,
+            subtype=subtype,
+            filename=nome_arquivo,
+        )
 
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
         smtp.starttls()
@@ -193,6 +127,7 @@ def enviar_email_com_anexo(assunto, corpo, destinatario, caminho_anexo):
 @app.route("/", methods=["GET", "POST"])
 def formulario():
     if request.method == "GET":
+        # Mostra formulário para o cliente
         return render_template("form.html", carros=CARROS)
 
     # ---------- 1. RECEBE OS DADOS DO FORMULÁRIO ----------
@@ -224,6 +159,7 @@ def formulario():
     else:
         dias_locacao = (data_fim - data_inicio).days
 
+    # Arquivos anexos
     arquivo_cnh = request.files.get("arquivo_cnh")
     arquivo_comprovante = request.files.get("arquivo_comprovante")
 
@@ -232,6 +168,7 @@ def formulario():
 
     carro = CARROS[carro_id]
 
+    # ---------- 2. PREPARA CONTEXTO PARA O DOCX ----------
     contexto = {
         "locatario_nome": up(locatario_nome),
         "locatario_nacionalidade": up(locatario_nacionalidade),
@@ -240,12 +177,14 @@ def formulario():
         "locatario_rg": locatario_rg,
         "locatario_cpf": locatario_cpf,
         "locatario_cnh": locatario_cnh,
+
         "locatario_rua": up(locatario_rua),
         "locatario_numero": locatario_numero,
         "locatario_bairro": up(locatario_bairro),
         "locatario_cep": locatario_cep,
         "locatario_cidade": up(locatario_cidade),
         "locatario_uf": up(locatario_uf),
+
         "carro_marca": up(carro["marca"]),
         "carro_modelo": up(carro["modelo"]),
         "carro_ano": carro["ano"],
@@ -253,6 +192,7 @@ def formulario():
         "carro_placa": up(carro["placa"]),
         "carro_categoria": up(carro["categoria"]),
         "carro_valor_avaliacao": carro["valor_avaliacao"],
+
         "dias_locacao": dias_locacao,
         "data_inicio": data_inicio.strftime("%d/%m/%Y"),
         "data_fim": data_fim.strftime("%d/%m/%Y"),
@@ -264,42 +204,10 @@ def formulario():
 
     nome_base = f"contrato_{locatario_nome.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
     caminho_docx_preenchido = os.path.join(OUTPUT_FOLDER, f"{nome_base}.docx")
-    caminho_pdf_contrato = os.path.join(OUTPUT_FOLDER, f"{nome_base}.pdf")
 
     doc.save(caminho_docx_preenchido)
 
-    # ---------- 4. CONVERTE DOCX PARA PDF (LIBREOFFICE) ----------
-    docx_para_pdf(caminho_docx_preenchido, caminho_pdf_contrato)
-
-    pdfs_para_juntar = [caminho_pdf_contrato]
-
-    # ---------- 5. TRATA ANEXOS (CNH + COMPROVANTE) ----------
-    def preparar_pdf_anexo(caminho_arquivo):
-        if not caminho_arquivo:
-            return None
-        ext = os.path.splitext(caminho_arquivo)[1].lower()
-        if ext in [".jpg", ".jpeg", ".png"]:
-            caminho_pdf_anexo = caminho_arquivo + ".pdf"
-            imagem_para_pdf(caminho_arquivo, caminho_pdf_anexo)
-            return caminho_pdf_anexo
-        elif ext == ".pdf":
-            return caminho_arquivo
-        else:
-            return None
-
-    pdf_cnh = preparar_pdf_anexo(caminho_cnh)
-    pdf_comp = preparar_pdf_anexo(caminho_comprovante)
-
-    if pdf_cnh:
-        pdfs_para_juntar.append(pdf_cnh)
-    if pdf_comp:
-        pdfs_para_juntar.append(pdf_comp)
-
-    # ---------- 6. JUNTA TUDO EM UM ÚNICO PDF ----------
-    caminho_pdf_final = os.path.join(OUTPUT_FOLDER, f"{nome_base}_FINAL.pdf")
-    juntar_pdfs(pdfs_para_juntar, caminho_pdf_final)
-
-    # ---------- 7. ENVIA O CONTRATO POR E-MAIL PARA A LOCADORA ----------
+    # ---------- 4. ENVIA CONTRATO (DOCX) + ANEXOS POR E-MAIL ----------
     assunto = f"Pré-contrato de locação - {locatario_nome}"
     corpo_email = f"""
 Foi gerada uma pré-solicitação de contrato de locação.
@@ -310,23 +218,33 @@ Carro: {carro['nome_exibicao']}
 Período: {contexto['data_inicio']} até {contexto['data_fim']}
 Quantidade de dias: {dias_locacao}
 
-O contrato completo segue em anexo para conferência e assinatura.
+Anexos:
+- Contrato em DOCX para conferência e assinatura.
+- CNH do cliente.
+- Comprovante de endereço do cliente.
 """
+
+    anexos = [caminho_docx_preenchido]
+    if caminho_cnh:
+        anexos.append(caminho_cnh)
+    if caminho_comprovante:
+        anexos.append(caminho_comprovante)
 
     status_envio = "ok"
     erro_envio = None
 
     try:
-        enviar_email_com_anexo(
+        enviar_email_com_anexos(
             assunto=assunto,
             corpo=corpo_email,
             destinatario=EMAIL_DESTINO,
-            caminho_anexo=caminho_pdf_final,
+            caminhos=anexos,
         )
     except Exception as e:
         status_envio = "erro"
         erro_envio = str(e)
 
+    # ---------- 5. MOSTRA TELA DE CONFIRMAÇÃO ----------
     return render_template(
         "sucesso.html",
         status_envio=status_envio,
