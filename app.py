@@ -1,11 +1,10 @@
 from flask import Flask, render_template, request
 from datetime import datetime, timedelta
 import os
-import subprocess  # <--- NOVO
+import subprocess  # para chamar o LibreOffice
 
 from werkzeug.utils import secure_filename
 from docxtpl import DocxTemplate
-# from docx2pdf import convert  # <--- REMOVIDO
 from PyPDF2 import PdfMerger
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -97,7 +96,6 @@ def imagem_para_pdf(caminho_imagem, caminho_pdf_saida):
     img = ImageReader(caminho_imagem)
     largura_img, altura_img = img.getSize()
 
-    # escala proporcional para caber na página
     escala = min(largura_pagina / largura_img, altura_pagina / altura_img)
 
     nova_largura = largura_img * escala
@@ -111,32 +109,18 @@ def imagem_para_pdf(caminho_imagem, caminho_pdf_saida):
     c.save()
 
 
-def juntar_pdfs(lista_caminhos, caminho_saida):
-    """Junta vários PDFs em um único arquivo."""
-    merger = PdfMerger()
-    for caminho in lista_caminhos:
-        merger.append(caminho)
-    with open(caminho_saida, "wb") as f:
-        merger.write(f)
-    merger.close()
-
-
 def docx_para_pdf(caminho_docx, caminho_pdf_destino):
     """
-    Converte DOCX em PDF usando LibreOffice pela linha de comando.
-    Render usa Linux, então é esse caminho aqui.
+    Converte DOCX em PDF usando LibreOffice pela linha de comando (Linux).
     """
     pasta_saida = os.path.dirname(caminho_pdf_destino) or BASE_DIR
 
-    # Executa o LibreOffice em modo headless
     resultado = subprocess.run(
         [
             "libreoffice",
             "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            pasta_saida,
+            "--convert-to", "pdf",
+            "--outdir", pasta_saida,
             caminho_docx,
         ],
         stdout=subprocess.PIPE,
@@ -147,13 +131,36 @@ def docx_para_pdf(caminho_docx, caminho_pdf_destino):
     if resultado.returncode != 0:
         raise RuntimeError(f"Erro ao converter DOCX para PDF: {resultado.stderr}")
 
-    # LibreOffice salva com o mesmo nome base do DOCX
+    # LibreOffice gera um PDF com o mesmo nome base do DOCX
     nome_base = os.path.splitext(os.path.basename(caminho_docx))[0] + ".pdf"
     pdf_gerado = os.path.join(pasta_saida, nome_base)
 
-    # Se o nome for diferente do esperado, renomeia
+    # Se o destino for diferente do gerado, renomeia
     if pdf_gerado != caminho_pdf_destino:
         os.replace(pdf_gerado, caminho_pdf_destino)
+
+
+def juntar_pdfs(lista_caminhos, caminho_saida):
+    """
+    Juntas os PDFs, ignorando arquivos inexistentes ou vazios (0 bytes)
+    para evitar PyPDF2.errors.EmptyFileError.
+    """
+    merger = PdfMerger()
+
+    for caminho in lista_caminhos:
+        if not caminho:
+            continue
+        if not os.path.exists(caminho):
+            continue
+        if os.path.getsize(caminho) == 0:
+            # se por algum motivo o PDF estiver vazio, pula
+            continue
+
+        merger.append(caminho)
+
+    with open(caminho_saida, "wb") as f:
+        merger.write(f)
+    merger.close()
 
 
 def enviar_email_com_anexo(assunto, corpo, destinatario, caminho_anexo):
@@ -164,7 +171,6 @@ def enviar_email_com_anexo(assunto, corpo, destinatario, caminho_anexo):
     msg["To"] = destinatario
     msg.set_content(corpo)
 
-    # Anexa o PDF
     with open(caminho_anexo, "rb") as f:
         dados = f.read()
     nome_arquivo = os.path.basename(caminho_anexo)
@@ -187,11 +193,9 @@ def enviar_email_com_anexo(assunto, corpo, destinatario, caminho_anexo):
 @app.route("/", methods=["GET", "POST"])
 def formulario():
     if request.method == "GET":
-        # Mostra formulário para o cliente
         return render_template("form.html", carros=CARROS)
 
     # ---------- 1. RECEBE OS DADOS DO FORMULÁRIO ----------
-    # Dados do locatário
     locatario_nome = request.form.get("locatario_nome")
     locatario_nacionalidade = request.form.get("locatario_nacionalidade")
     locatario_estado_civil = request.form.get("locatario_estado_civil")
@@ -207,7 +211,6 @@ def formulario():
     locatario_cidade = request.form.get("locatario_cidade")
     locatario_uf = request.form.get("locatario_uf")
 
-    # Dados da locação
     carro_id = request.form.get("carro")
     data_inicio_str = request.form.get("data_inicio")
     data_fim_str = request.form.get("data_fim")
@@ -215,14 +218,12 @@ def formulario():
     data_inicio = datetime.strptime(data_inicio_str, "%Y-%m-%d").date()
     data_fim = datetime.strptime(data_fim_str, "%Y-%m-%d").date()
 
-    # Regra: se data_fim <= data_inicio, força 1 dia
     if data_fim <= data_inicio:
         dias_locacao = 1
         data_fim = data_inicio + timedelta(days=1)
     else:
         dias_locacao = (data_fim - data_inicio).days
 
-    # Arquivos anexos
     arquivo_cnh = request.files.get("arquivo_cnh")
     arquivo_comprovante = request.files.get("arquivo_comprovante")
 
@@ -231,7 +232,6 @@ def formulario():
 
     carro = CARROS[carro_id]
 
-    # ---------- 2. PREPARA CONTEXTO PARA O DOCX ----------
     contexto = {
         "locatario_nome": up(locatario_nome),
         "locatario_nacionalidade": up(locatario_nacionalidade),
@@ -240,14 +240,12 @@ def formulario():
         "locatario_rg": locatario_rg,
         "locatario_cpf": locatario_cpf,
         "locatario_cnh": locatario_cnh,
-
         "locatario_rua": up(locatario_rua),
         "locatario_numero": locatario_numero,
         "locatario_bairro": up(locatario_bairro),
         "locatario_cep": locatario_cep,
         "locatario_cidade": up(locatario_cidade),
         "locatario_uf": up(locatario_uf),
-
         "carro_marca": up(carro["marca"]),
         "carro_modelo": up(carro["modelo"]),
         "carro_ano": carro["ano"],
@@ -255,7 +253,6 @@ def formulario():
         "carro_placa": up(carro["placa"]),
         "carro_categoria": up(carro["categoria"]),
         "carro_valor_avaliacao": carro["valor_avaliacao"],
-
         "dias_locacao": dias_locacao,
         "data_inicio": data_inicio.strftime("%d/%m/%Y"),
         "data_fim": data_fim.strftime("%d/%m/%Y"),
@@ -271,7 +268,7 @@ def formulario():
 
     doc.save(caminho_docx_preenchido)
 
-    # ---------- 4. CONVERTE DOCX PARA PDF (AGORA COM LIBREOFFICE) ----------
+    # ---------- 4. CONVERTE DOCX PARA PDF (LIBREOFFICE) ----------
     docx_para_pdf(caminho_docx_preenchido, caminho_pdf_contrato)
 
     pdfs_para_juntar = [caminho_pdf_contrato]
@@ -330,7 +327,6 @@ O contrato completo segue em anexo para conferência e assinatura.
         status_envio = "erro"
         erro_envio = str(e)
 
-    # ---------- 8. MOSTRA TELA DE CONFIRMAÇÃO ----------
     return render_template(
         "sucesso.html",
         status_envio=status_envio,
